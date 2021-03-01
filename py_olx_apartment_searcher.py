@@ -7,13 +7,14 @@ from datetime import datetime
 import time
 
 #TO_DO:
-# 1. check links matching (details are not synced with proper hyperlink)
-# 2. check for duplicates (i think link mismatch will fix that)
+# 1. check links matching (details are not synced with proper hyperlink) -done
+# 2. check for duplicates (i think link mismatch will fix that) -@olx randomizes promoted link, so need to do some excel magic - done
 # 3. otodom module
-# 4. workflow improvement
+# 4. workflow improvement - in progress
 
 #GLOBALS
 PAGE_NUMBER = 1
+PAGE_BOUNDARY = 3
 URL = 'https://www.olx.pl/nieruchomosci/mieszkania/warszawa/?search%5Bfilter_float_price%3Afrom%5D=1600&search%5Bfilter_float_price%3Ato%5D=2100&search%5Bfilter_enum_rooms%5D%5B0%5D=two&search%5Bprivate_business%5D=private'
 OLX_LINKS = []
 OTODOM_LINKS = []
@@ -50,13 +51,17 @@ def olx_offer_parser(link):
     page_details = requests.get(link)
     soup_details = BeautifulSoup(page_details.content, 'html.parser')
 
+    #Title
     title = soup_details.find('div',
                               class_='offer-titlebox').find('h1').text.strip()
+
+    #Localization (try/except, because there are low odds that advert will be moved to archive during fetching [with localization dissappearing in the process])
     try:
         localization = soup_details.find('address').find('p').text
     except AttributeError:
         localization = 'Warszawa'
 
+    #Date
     date_location = soup_details.find('em').find('strong').text
     date = [x.strip() for x in date_location.split(',')]
     date_time = date[0].replace("o ", "")
@@ -68,15 +73,18 @@ def olx_offer_parser(link):
         date_date[1]) == 1 else date_date[1]
     date_date_formated = datetime.strptime("/".join(date_date), '%d/%m/%Y')
 
+    #Price
     price = int("".join([
         str(s) for s in [
             int(s) for s in soup_details.find(
                 'div', class_='pricelabel').text.split() if s.isdigit()
         ]
     ]))
-    #FIX THIS
+    #-!--FIX THIS--!-
     if price == 20:
         price = 2000
+
+    #Subprice
     subprice_check = soup_details.find('span', string="Czynsz (dodatkowo)")
     if subprice_check is not None:
         try:
@@ -90,6 +98,11 @@ def olx_offer_parser(link):
             subprice = 0
     else:
         subprice = 0
+    #--Sometimes people are funny and put the price in the subprice because reasons haha--
+    if price == subprice:
+        subprice = 0
+
+    #Total
     total = price + subprice
     offer = Offer(title, total, link, localization, date_time,
                   date_date_formated.date())
@@ -97,8 +110,8 @@ def olx_offer_parser(link):
     return offer.return_json_object()
 
 
-# loop through the offers and extract their links
-for i in range(PAGE_NUMBER, 10):
+# Loop through the offers and extract their links
+for i in range(PAGE_NUMBER, PAGE_BOUNDARY):
     url = URL + '&page={}'.format(PAGE_NUMBER)
     page = requests.get(url)
     soup = BeautifulSoup(page.content, 'html.parser')
@@ -112,13 +125,10 @@ for i in range(PAGE_NUMBER, 10):
             OTODOM_LINKS.append(offer_link)
     PAGE_NUMBER += 1
 
-# remove duplicates
-OLX_LINKS = list(set(OLX_LINKS))
-OTODOM_LINKS = list(set(OTODOM_LINKS))
-
 for link in OLX_LINKS:
     offer_details = olx_offer_parser(link)
-    OFFERS_LIST.append(offer_details)
+    if offer_details not in OFFERS_LIST:
+        OFFERS_LIST.append(offer_details)
 
 # Worksheet initialization
 
@@ -147,4 +157,5 @@ for offer in OFFERS_LIST:
     #link
     sheet['F{}'.format(current_row)].hyperlink = offer['link']
     current_row += 1
+
 workbook.save(filename=sys.argv[1])
